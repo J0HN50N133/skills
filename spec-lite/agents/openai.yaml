@@ -1,0 +1,4 @@
+interface:
+  display_name: "Spec Lite"
+  short_description: "Write lean engineering change specs"
+  default_prompt: "Use $spec-lite to draft or refine a concise engineering change spec."
