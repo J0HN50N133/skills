@@ -32,20 +32,34 @@ Avoid vague titles such as `Improve backend logic` or `Support new workflow`. Na
 
 Use this section order unless the user explicitly asks for a different format:
 
-1. `Goal`
-2. `Non-goals`
-3. `Impact Scope`
-4. `Data Flow`
-5. `Interface And Schema Changes`
-6. `Invariants`
-7. `Implementation Plan`
-8. `Verification`
-9. `Manual Checks`
+1. `Status`
+2. `Context`
+3. `Goal`
+4. `Non-goals`
+5. `Impact Scope`
+6. `Data Flow`
+7. `Interface And Schema Changes`
+8. `Invariants`
+9. `Implementation Plan`
+10. `Verification`
+11. `Manual Checks`
 
 Read [references/spec-template.md](./references/spec-template.md) when you need the exact template and section guidance.
 Read [references/bad-request-to-spec-example.md](./references/bad-request-to-spec-example.md) when you need a full example that shows how to turn a vague request into a good spec using this skill's workflow.
 
 ## Write Each Section With Discipline
+
+### Status
+
+Mark the current state of the change. Use one concise value such as `Draft`, `Ready for implementation`, `In progress`, `Blocked`, `Ready for review`, or `Done`.
+
+Include the blocker or review owner only when it changes the next action.
+
+### Context
+
+Explain the background that makes this change necessary. Capture the triggering request, observed problem, product decision, operational issue, or architectural constraint.
+
+Keep it factual and brief. Do not duplicate the goal or implementation plan.
 
 ### Goal
 
@@ -144,6 +158,8 @@ Before finishing, verify:
 
 - the title names one concrete change
 - every required section exists
+- status identifies the current state of the change
+- context explains why the change is needed
 - scope and non-goals do not conflict
 - invariants are reviewable
 - verification commands are runnable or clearly marked as pending

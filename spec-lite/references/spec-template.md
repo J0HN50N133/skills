@@ -5,6 +5,12 @@ Use this template when drafting a new spec.
 ```md
 # Change Name
 
+## Status
+Draft
+
+## Context
+Briefly explain the triggering request, observed problem, product decision, operational issue, or architectural constraint behind this change.
+
 ## Goal
 One sentence that states the user or system problem this change solves.
 
@@ -37,6 +43,14 @@ List data flow, compatibility, and security boundaries that require human judgme
 ```
 
 ## Section Notes
+
+### Status
+
+Use one concise value such as `Draft`, `Ready for implementation`, `In progress`, `Blocked`, `Ready for review`, or `Done`.
+
+### Context
+
+Keep the background factual and brief. Explain why the change is needed without repeating the goal or implementation plan.
 
 ### Goal
 
@@ -81,6 +95,8 @@ Focus on correctness boundaries that are hard to automate.
 
 - the title is concrete
 - every required section exists
+- status identifies the current state of the change
+- context explains why the change is needed
 - no placeholder text remains
 - non-goals are strong enough to block adjacent work
 - invariants are specific enough to catch regressions

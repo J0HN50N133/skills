@@ -61,6 +61,12 @@ The original request does not justify repository-specific conventions, UI experi
 ```md
 # Add Cursor-Paginated Run List Filtering
 
+## Status
+Draft
+
+## Context
+The existing run list request mixes filtering, pagination, UI redesign, and cleanup ideas. This spec narrows the work to the API and query behavior needed to load large run lists predictably.
+
 ## Goal
 Allow large run lists to load predictably by adding explicit server-side filtering and cursor pagination to the run list query contract.
 
