@@ -23,6 +23,9 @@ Ask the user for:
    - A custom header name and value (e.g. `X-API-Key: sk-abc123`)
 3. **Additional custom headers** (optional) — any extra headers the server requires beyond auth, e.g. `X-Tools-Set: my_tools` or `x-readonly: true`. Format: `Header-Name: value`, one per line.
 4. **Output directory name** — default to `mcp-quickjs-<hostname>/` in the current directory
+5. **Auth storage method** — how should the token be provided at runtime? Ask the user:
+   - **Environment variable** (default if user doesn't specify) — `std.getenv("MCP_AUTH_TOKEN")`, user exports it before running
+   - **Config file** — reads from a local file at project root that the user maintains, e.g. `config.json`
 
 **Auth detection logic:**
 - If the user provides a value starting with `Bearer `, `Basic `, or another known scheme — use it verbatim as the full `Authorization` header value
@@ -30,7 +33,41 @@ Ask the user for:
 - If the user provides `HeaderName: value` format (contains `: `) — treat it as a custom header
 - Otherwise, wrap it as `Bearer <value>`
 
-Store the detected auth as `AUTH_HEADER` for the config file.
+Store the detected auth as `AUTH_HEADER` for use during Step 2 discovery. Generate the runtime auth reading code based on the user's chosen storage method (see Step 3a).
+
+**CRITICAL: Never hardcode tokens in source files.** The generated `config.js` MUST read auth credentials at runtime based on the user's chosen storage method — never embed literal tokens. Generate one of the following patterns in `config.js`:
+
+**Method 1: Environment variable** (default)
+
+```javascript
+export const AUTH_HEADER = std.getenv("MCP_AUTH_TOKEN") || "";
+```
+
+User sets the token before running: `export MCP_AUTH_TOKEN="Bearer tai_pat_..."`
+
+**Method 2: Config file**
+
+The user maintains a JSON config file at the project root. Generate also a `.gitignore` to prevent it from being committed.
+
+```javascript
+let __authHeader = "";
+try {
+    const f = std.open("../config.json", "r");
+    __authHeader = JSON.parse(f.readAsString()).AUTH_HEADER || "";
+    f.close();
+} catch (e) {}
+export const AUTH_HEADER = __authHeader;
+```
+
+The `config.json` format (create `config.json.example` so users can copy it):
+
+```json
+{
+  "AUTH_HEADER": "Bearer your_token_here"
+}
+```
+
+Regardless of method, the token is only used during Step 2's curl discovery — after that, it is discarded and the generated code reads it fresh at runtime on each invocation.
 
 ### Step 2: Discover MCP tools
 
@@ -91,12 +128,14 @@ Create the output directory with this structure:
 ```
 mcp-quickjs-<hostname>/
 ├── SKILL.md              # Lean overview, tool index, references/ pointer
+├── .gitignore             # If config file method: ignores config.json
+├── config.json.example    # If config file method: copy to config.json and fill in auth
 ├── references/            # Progressive disclosure: one .md per tool
 │   ├── tool_a.md
 │   └── ...
 └── scripts/
     ├── run.sh             # Entry wrapper: qjs --std "$@"
-    ├── config.js          # URL, auth, session
+    ├── config.js          # URL, auth (reads from env or file), session
     ├── mcp-client.js      # Shared runtime: mcpRequest, listTools, helpers
     ├── mcp.js             # CLI: list / schema / call <name> '<json>'
     └── tools/             # Importable JS functions
@@ -121,7 +160,9 @@ First, compute derived names for each tool:
 
 Template: `assets/templates/config.template.js`. Replace:
 - `{{MCP_URL}}` → user-provided URL
-- `{{AUTH_HEADER}}` → detected auth value (empty if none)
+- `{{AUTH_READER}}` → **DO NOT insert the literal token** — generate the runtime auth reading code based on the user's chosen storage method (see critical rule in Step 1). Use one of the two patterns:
+  - **Env var**: `std.getenv("MCP_AUTH_TOKEN") || ""`
+  - **Config file**: `try/catch` block reading `../config.json` via `std.open()`
 - `{{MCP_SESSION_ID}}` → session ID from Step 2a (empty if stateless)
 - `{{CUSTOM_HEADERS}}` → JS array entries for any additional headers, e.g. `["X-Tools-Set", "my_tools"]`. Each entry on its own line with trailing comma. If no custom headers, leave empty.
 
@@ -183,6 +224,24 @@ Replace:
   - `list_users` — see `references/list_users.md`
   ```
   **Do NOT include descriptions or parameter lists here.** The index is just names + reference file pointers. The AI will read the relevant `references/<name>.md` on demand for details.
+
+#### 3h. `.gitignore` and `config.json.example` (only if using config file method)
+
+If the user chose the **config file** auth storage method, generate two additional files:
+
+**`.gitignore`** — prevents the auth config from being committed:
+```
+config.json
+```
+
+**`config.json.example`** — template for users to copy and fill in:
+```json
+{
+  "AUTH_HEADER": "Bearer your_token_here"
+}
+```
+
+Skip these files if using the env var method — nothing to ignore and no file to template.
 
 ### Step 4: Present results
 
