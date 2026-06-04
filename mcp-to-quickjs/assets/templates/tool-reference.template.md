@@ -12,13 +12,10 @@
 
 ```bash
 # Inspect schema
-qjs mcp.js schema {{TOOL_NAME}}
+./run.sh mcp.js schema {{TOOL_NAME}}
 
 # Call directly
-qjs mcp.js call {{TOOL_NAME}} '{{USAGE_EXAMPLE}}'
-
-# Or use the convenience wrapper
-qjs {{TOOL_FILE_NAME}}.js '{{USAGE_EXAMPLE}}'
+./run.sh mcp.js call {{TOOL_NAME}} '{{USAGE_EXAMPLE}}'
 ```
 
 ## Programmatic

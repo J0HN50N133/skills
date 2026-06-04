@@ -21,7 +21,8 @@ Ask the user for:
    - A Bearer token (just the token value, e.g. `eyJhbGciOi...` — you will prepend `Bearer `)
    - A full `Authorization` header value (e.g. `Bearer eyJ...` or `Basic dXNlcjpwYXNz`)
    - A custom header name and value (e.g. `X-API-Key: sk-abc123`)
-3. **Output directory name** — default to `mcp-quickjs-<hostname>/` in the current directory
+3. **Additional custom headers** (optional) — any extra headers the server requires beyond auth, e.g. `X-Tools-Set: my_tools` or `x-readonly: true`. Format: `Header-Name: value`, one per line.
+4. **Output directory name** — default to `mcp-quickjs-<hostname>/` in the current directory
 
 **Auth detection logic:**
 - If the user provides a value starting with `Bearer `, `Basic `, or another known scheme — use it verbatim as the full `Authorization` header value
@@ -97,15 +98,15 @@ mcp-quickjs-<hostname>/
     ├── run.sh             # Entry wrapper: qjs --std "$@"
     ├── config.js          # URL, auth, session
     ├── mcp-client.js      # Shared runtime: mcpRequest, listTools, helpers
-    ├── mcp.js             # CLI dispatcher: list / schema / call
-    ├── tools/             # Importable JS functions
-    │   ├── tool_a.js      # export async function toolA(args) { ... }
-    │   └── ...
-    ├── tool_a.js          # CLI convenience: imports tools/tool_a.js
-    └── ...
+    ├── mcp.js             # CLI: list / schema / call <name> '<json>'
+    └── tools/             # Importable JS functions
+        ├── tool_a.js      # export async function toolA(args) { ... }
+        └── ...
 ```
 
-For each tool discovered in Step 2b, generate **three files** plus update the index.
+`mcp.js` is the **only** CLI entry point — no per-tool wrappers. Each tool exists as a function in `tools/` for programmatic composition, plus a reference in `references/` for on-demand schema lookup.
+
+For each tool discovered in Step 2b, generate **two files** plus update the index.
 
 First, compute derived names for each tool:
 - `TOOL_NAME` — original MCP name (e.g. `get_weather`)
@@ -122,21 +123,28 @@ Template: `assets/templates/config.template.js`. Replace:
 - `{{MCP_URL}}` → user-provided URL
 - `{{AUTH_HEADER}}` → detected auth value (empty if none)
 - `{{MCP_SESSION_ID}}` → session ID from Step 2a (empty if stateless)
+- `{{CUSTOM_HEADERS}}` → JS array entries for any additional headers, e.g. `["X-Tools-Set", "my_tools"]`. Each entry on its own line with trailing comma. If no custom headers, leave empty.
 
-#### 3b. `scripts/mcp-client.js`
+#### 3b. `scripts/run.sh`
 
-Copy `assets/mcp-client.js` verbatim. Contains `mcpRequest`, `mcpCall`, `listTools`, `getSchema`, `printToolList`, `printSchema`, `printResult`, `parseArgs`.
+Copy `assets/run.sh` verbatim and make it executable (`chmod +x`). This wraps `qjs --std "$@"` so users don't need to remember the `--std` flag (required for QuickJS built-in `std` and `os` modules).
 
-#### 3c. `scripts/mcp.js`
+Usage: `./run.sh mcp.js list`, `./run.sh mcp.js call get_weather '{"location":"Beijing"}'`
+
+#### 3c. `scripts/mcp-client.js`
+
+Copy `assets/mcp-client.js` verbatim. Contains `mcpRequest`, `mcpCall`, `listTools`, `getSchema`, `printToolList`, `printSchema`, `printResult`, `parseArgs`. Supports `CUSTOM_HEADERS` from config for server-specific headers.
+
+#### 3d. `scripts/mcp.js`
 
 Copy `assets/templates/mcp.template.js` verbatim. CLI dispatcher:
 ```
-qjs mcp.js list                     # Dynamic: query server for current tools
-qjs mcp.js schema <tool_name>       # Show schema
-qjs mcp.js call <tool_name> '{}'    # Call any tool
+./run.sh mcp.js list                     # Dynamic: query server for current tools
+./run.sh mcp.js schema <tool_name>       # Show schema
+./run.sh mcp.js call <tool_name> '{}'    # Call any tool
 ```
 
-#### 3d. `scripts/tools/<name>.js` (importable function)
+#### 3e. `scripts/tools/<name>.js` (importable function)
 
 Template: `assets/templates/tool-func.template.js`. For each tool, generate:
 ```javascript
@@ -148,12 +156,6 @@ export async function getWeather(args) {
 Replace `{{TOOL_NAME}}`, `{{FUNCTION_NAME}}`, `{{TOOL_FILE_NAME}}`, `{{TOOL_DESCRIPTION}}`, `{{DEFAULT_ARGS}}`, `{{PARAMS_ANNOTATION}}`.
 
 The function is pure — it returns the MCP result object. Callers handle display/logic.
-
-#### 3e. `scripts/<name>.js` (CLI convenience wrapper)
-
-Template: `assets/templates/tool-cli.template.js`. For each tool, generate a thin CLI script that imports the function from `tools/` and prints the result.
-
-Replace `{{TOOL_NAME}}`, `{{FUNCTION_NAME}}`, `{{TOOL_FILE_NAME}}`, `{{TOOL_DESCRIPTION}}`, `{{USAGE_EXAMPLE}}`.
 
 #### 3f. `references/<name>.md` (progressive disclosure)
 
@@ -186,13 +188,12 @@ Replace:
 After generation, summarize:
 - How many tools were discovered and wrapped
 - The output directory path and structure
-- **Dynamic discovery**: `cd scripts && qjs mcp.js list` to see all tools
-- **Per-tool CLI**: `cd scripts && qjs <tool>.js '{"param": "value"}'`
+- **CLI**: `cd scripts && ./run.sh mcp.js list` to discover; `./run.sh mcp.js call <name> '{}'` to invoke
 - **Programmatic composition**: import from `scripts/tools/<tool>.js` to build pipelines
 - **Reference docs**: `references/<tool>.md` for each tool's full parameter schema
 - Note any tools skipped
 
-**If a tool has no parameters**, the CLI still works with `'{}'`; the function takes an empty object.
+**If a tool has no parameters**, pass `'{}'` or omit the json arg.
 
 ## Progressive disclosure design
 

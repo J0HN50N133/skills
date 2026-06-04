@@ -4,7 +4,7 @@
 // QuickJS has no fetch() — we use os.exec + curl instead.
 // Requires: qjs --std (std and os are globals provided by --std flag)
 
-import { MCP_URL, AUTH_HEADER, MCP_SESSION_ID, MCP_PROTOCOL_VERSION } from './config.js';
+import { MCP_URL, AUTH_HEADER, MCP_SESSION_ID, MCP_PROTOCOL_VERSION, CUSTOM_HEADERS } from './config.js';
 
 let _reqCounter = 0;
 
@@ -38,6 +38,11 @@ export function mcpRequest(method, params) {
     }
     if (MCP_SESSION_ID && MCP_SESSION_ID.length > 0) {
         curlArgs.push("-H", "MCP-Session-Id: " + MCP_SESSION_ID);
+    }
+    if (CUSTOM_HEADERS) {
+        for (let i = 0; i < CUSTOM_HEADERS.length; i++) {
+            curlArgs.push("-H", CUSTOM_HEADERS[i][0] + ": " + CUSTOM_HEADERS[i][1]);
+        }
     }
 
     curlArgs.push("-d", "@" + tmpFile);
