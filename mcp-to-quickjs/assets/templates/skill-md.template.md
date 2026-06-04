@@ -1,13 +1,13 @@
 ---
 name: {{SERVER_HOSTNAME}}-tools
-description: QuickJS wrappers for {{TOOLS_COUNT}} MCP tools from {{SERVER_HOSTNAME}}. These scripts provide CLI access and importable JS functions for MCP tools at {{SERVER_URL}}. Supports dynamic discovery (mcp.js list/schema/call) and programmatic composition. To get details on a specific tool, read references/<tool_name>.md.
+description: {{SERVER_DESCRIPTION}} Use when you need to interact with {{SERVER_HOSTNAME}}. To get details on a specific tool, read references/<tool_name>.md.
 ---
 
 # {{SERVER_HOSTNAME}} MCP Tools
 
 {{TOOLS_COUNT}} tools wrapped from `{{SERVER_URL}}`. Each tool is available as:
-- A **JS function** in `scripts/tools/<name>.js` — importable for programmatic composition
-- A **CLI convenience wrapper** at `scripts/<name>.js` — call directly with JSON args
+- An **importable JS function** in `scripts/tools/<name>.js` — for programmatic composition
+- A **CLI call** via `./run.sh mcp.js call <name> '{}'` — for ad-hoc invocation
 - A **detailed reference** in `references/<name>.md` — read on demand for parameter schemas
 
 ## Quick start

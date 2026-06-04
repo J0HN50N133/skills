@@ -173,6 +173,7 @@ Replace:
 - `{{SERVER_HOSTNAME}}` → hostname from URL
 - `{{SERVER_URL}}` → full MCP URL
 - `{{TOOLS_COUNT}}` → number of tools
+- `{{SERVER_DESCRIPTION}}` → a one-line summary of what the server platform does and what users can accomplish with it. **Describe the platform, not the skill.** For example: `Get current weather, forecasts, and alerts for any location worldwide.` or `Manage tasks, bugs, and feature requests across projects.` Do NOT write "provides CLI access" or "wraps MCP tools" — those describe the skill's internals, not the server's purpose.
 - `{{EXAMPLE_FUNCTION}}` → `FUNCTION_NAME` of the first tool
 - `{{EXAMPLE_FILE}}` → `TOOL_FILE_NAME` of the first tool
 - `{{EXAMPLE_ARGS}}` → `DEFAULT_ARGS` of the first tool
