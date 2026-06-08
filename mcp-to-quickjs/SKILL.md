@@ -5,9 +5,11 @@ description: Convert MCP (Model Context Protocol) server tools into QuickJS-comp
 
 # MCP to QuickJS
 
-Convert an MCP server's tools into a set of standalone QuickJS (qjs) scripts. The user provides an MCP server URL and auth credentials; you discover all available tools via the MCP JSON-RPC protocol, then generate a portable directory of `.js` wrapper scripts.
+Convert an MCP server's tools into a set of standalone QuickJS (qjs) scripts. The user provides an MCP server URL; you discover all available tools via the MCP JSON-RPC protocol, then generate a portable directory of `.js` wrapper scripts.
 
 The generated directory includes a **universal `mcp.js` entry point** that supports dynamic discovery — `list`, `schema`, and `call` subcommands — plus per-tool convenience wrappers. Tools are discovered on-demand at runtime (no pre-loaded manifest), so the script always reflects the server's current state.
+
+**Authentication is handled automatically.** If the MCP server uses OAuth2 (returns 401 + `WWW-Authenticate`), the skill walks through the standard MCP Authorization flow (OAuth2.1 + PKCE + dynamic client registration) and generates a reusable `auth-login.js` tool.
 
 ## Workflow
 
@@ -16,62 +18,141 @@ The generated directory includes a **universal `mcp.js` entry point** that suppo
 Ask the user for:
 
 1. **MCP Server URL** — the streamable HTTP endpoint (e.g. `https://api.example.com/mcp`)
-2. **Authentication** — one of:
-   - Nothing (no auth)
-   - A Bearer token (just the token value, e.g. `eyJhbGciOi...` — you will prepend `Bearer `)
-   - A full `Authorization` header value (e.g. `Bearer eyJ...` or `Basic dXNlcjpwYXNz`)
-   - A custom header name and value (e.g. `X-API-Key: sk-abc123`)
-3. **Additional custom headers** (optional) — any extra headers the server requires beyond auth, e.g. `X-Tools-Set: my_tools` or `x-readonly: true`. Format: `Header-Name: value`, one per line.
-4. **Output directory name** — default to `mcp-quickjs-<hostname>/` in the current directory
-5. **Auth storage method** — how should the token be provided at runtime? Ask the user:
-   - **Environment variable** (default if user doesn't specify) — `std.getenv("MCP_AUTH_TOKEN")`, user exports it before running
-   - **Config file** — reads from a local file at project root that the user maintains, e.g. `config.json`
+2. **Output directory name** — default to `mcp-quickjs-<hostname>/` in the current directory
+3. **Additional custom headers** (optional) — any extra headers the server requires, e.g. `X-Tools-Set: my_tools`. Format: `Header-Name: value`, one per line only if there are headers beyond auth.
 
-**Auth detection logic:**
-- If the user provides a value starting with `Bearer `, `Basic `, or another known scheme — use it verbatim as the full `Authorization` header value
-- If the user provides a JWT-looking string (starts with `eyJ`) or a simple token — prepend `Bearer `
-- If the user provides `HeaderName: value` format (contains `: `) — treat it as a custom header
-- Otherwise, wrap it as `Bearer <value>`
+**Do NOT ask the user for auth credentials upfront.** Instead, proceed to Step 1a to probe the server.
 
-Store the detected auth as `AUTH_HEADER` for use during Step 2 discovery. Generate the runtime auth reading code based on the user's chosen storage method (see Step 3a).
+### Step 1a: Probe the server and auto-detect authentication
 
-**CRITICAL: Never hardcode tokens in source files.** The generated `config.js` MUST read auth credentials at runtime based on the user's chosen storage method — never embed literal tokens. Generate one of the following patterns in `config.js`:
+First, probe the MCP server **without any auth** to discover its requirements:
 
-**Method 1: Environment variable** (default)
-
-```javascript
-export const AUTH_HEADER = std.getenv("MCP_AUTH_TOKEN") || "";
+```bash
+curl -i -s -X POST \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "MCP-Protocol-Version: 2025-11-25" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"mcp-to-quickjs","version":"1.0.0"}}}' \
+  "<MCP_URL>"
 ```
 
-User sets the token before running: `export MCP_AUTH_TOKEN="Bearer tai_pat_..."`
+**If the server responds with 200 + JSON body**, no auth is needed. Skip to Step 2a.
 
-**Method 2: Config file**
+**If the server responds with 401 + `WWW-Authenticate` header**, the server uses OAuth2. Follow the OAuth2 auto-authentication flow below.
 
-The user maintains a JSON config file at the project root. Generate also a `.gitignore` to prevent it from being committed.
+#### OAuth2 Auto-Authentication Flow
 
-```javascript
-let __authHeader = "";
-try {
-    const f = std.open("../config.json", "r");
-    __authHeader = JSON.parse(f.readAsString()).AUTH_HEADER || "";
-    f.close();
-} catch (e) {}
-export const AUTH_HEADER = __authHeader;
+This is the standard MCP Authorization protocol (OAuth2.1 + PKCE + dynamic client registration). The process:
+
+```
+MCP Client ──GET /mcp──▶ MCP Server
+              ◀── 401 + WWW-Authenticate: Bearer resource_metadata="https://iam.../..."
+
+Step A: Discover auth server from resource_metadata
+Step B: Dynamically register a public client (RFC 7591)
+Step C: Execute PKCE authorization_code flow
+Step D: Save access_token + refresh_token to config.json
 ```
 
-The `config.json` format (create `config.json.example` so users can copy it):
+##### A. Discover the OAuth2 authorization server
 
+Parse the `WWW-Authenticate` header from the 401 response. Extract the `resource_metadata` URL and fetch it:
+
+```bash
+curl -s "<RESOURCE_METADATA_URL>" | python3 -m json.tool
+```
+
+Record:
+- `AUTH_SERVER` = `authorization_servers[0]` (e.g. `https://iam.it.woa.com/oauth2/`)
+- `SCOPE` = typically `"openid profile offline offline_access"`
+
+##### B. Dynamically register a public client
+
+For CLI tools, do NOT use pre-registered client secrets. Register a public client with `token_endpoint_auth_method: "none"`:
+
+```bash
+curl -s -X POST "<AUTH_SERVER>/register" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_name": "<dir_name>-mcp-quickjs",
+    "grant_types": ["authorization_code", "refresh_token"],
+    "response_types": ["code"],
+    "redirect_uris": ["http://localhost:8899/callback"],
+    "token_endpoint_auth_method": "none",
+    "application_type": "native"
+  }'
+```
+
+Record `CLIENT_ID` from the response. This client_id will be used for the PKCE flow.
+
+##### C. Execute PKCE authorization_code flow interactively
+
+Guide the user through the OAuth2 PKCE flow. The script `assets/auth-login.js` handles this automatically. Generate the authorization URL:
+
+1. Generate `code_verifier` (48 random bytes, base64url)
+2. Compute `code_challenge = base64url(sha256(code_verifier))`
+3. Generate random `state` (anti-CSRF)
+4. Build the authorization URL:
+
+```
+<AUTH_SERVER>/authorize?
+  response_type=code
+  client_id=<CLIENT_ID>
+  code_challenge=<challenge>
+  code_challenge_method=S256
+  resource=<MCP_URL>
+  redirect_uri=http://localhost:8899/callback
+  state=<state>
+  scope=openid profile offline offline_access
+```
+
+**Critical PKCE implementation details:**
+- Use `printf '%s' "$VERIFIER" | openssl dgst -sha256 -binary | openssl base64 | tr -d '=\n' | tr '/+' '_-'` for challenge computation. Do NOT use `echo -n` — it mangles binary data with special characters.
+- Save `{state, code_verifier, client_id, created_at}` to a session file so it persists between tool invocations. Load and reuse the session on repeat runs — overwriting it causes `code_verifier`/`code_challenge` mismatch → `invalid_grant`.
+
+Present the authorization URL to the user. They open it in their browser, complete authentication, and the browser redirects them to `http://localhost:8899/callback?code=XXXXX&state=YYYYY`.
+
+Ask the user to paste the full redirect URL from their browser address bar. Parse the `code` parameter from it. Validate the `state` matches the saved session.
+
+##### D. Exchange code for tokens
+
+```bash
+curl -s -X POST "<AUTH_SERVER>/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -H "Authorization: Basic $(printf '%s' '<CLIENT_ID>:' | openssl base64)" \
+  -d "client_id=<CLIENT_ID>&grant_type=authorization_code&code=<CODE>&code_verifier=<VERIFIER>&redirect_uri=http%3A%2F%2Flocalhost%3A8899%2Fcallback"
+```
+
+The response contains:
 ```json
 {
-  "AUTH_HEADER": "Bearer your_token_here"
+  "access_token": "...",    // 7 days typical
+  "refresh_token": "...",   // 30 days typical, one-time use
+  "expires_in": 604800,
+  "token_type": "bearer"
 }
 ```
 
-Regardless of method, the token is only used during Step 2's curl discovery — after that, it is discarded and the generated code reads it fresh at runtime on each invocation.
+Save to `config.json`:
+```json
+{
+  "AUTH_HEADER": "Bearer <access_token>",
+  "REFRESH_TOKEN": "<refresh_token>",
+  "EXPIRES_AT": <timestamp>
+}
+```
+
+This token is now used for Step 2 tool discovery.
+
+##### E. Generate auth-login.js for future re-authentication
+
+After successful authentication, the generated output will include `auth-login.js` (from `assets/auth-login.js` template) for the user to re-authenticate when tokens expire. This tool encapsulates the entire OAuth2 PKCE flow: `--new` for new sessions, `--url` for code exchange, `--refresh` for token refresh, `--status` to check expiry.
+
+Set `AUTH_MODE = "oauth2"` in the conversion state.
 
 ### Step 2: Discover MCP tools
 
-Use `curl` to discover all available tools. Run these commands in sequence:
+Use `curl` to discover all available tools. The `AUTH_HEADER` is now available from the OAuth2 flow (Step 1a-D) or from user-provided credentials.
 
 #### 2a. Initialize the MCP session
 
@@ -128,16 +209,17 @@ Create the output directory with this structure:
 ```
 mcp-quickjs-<hostname>/
 ├── SKILL.md              # Lean overview, tool index, references/ pointer
-├── .gitignore             # If config file method: ignores config.json
-├── config.json.example    # If config file method: copy to config.json and fill in auth
+├── .gitignore             # Ignores config.json (always generated for OAuth2)
+├── config.json.example    # Template: copy to config.json, run auth-login.js to fill
 ├── references/            # Progressive disclosure: one .md per tool
 │   ├── tool_a.md
 │   └── ...
 └── scripts/
     ├── run.sh             # Entry wrapper: qjs --std "$@"
-    ├── config.js          # URL, auth (reads from env or file), session
+    ├── config.js          # URL, auth (reads config.json), session
     ├── mcp-client.js      # Shared runtime: mcpRequest, listTools, helpers
     ├── mcp.js             # CLI: list / schema / call <name> '<json>'
+    ├── auth-login.js      # [OAuth2] PKCE login tool for re-authentication
     └── tools/             # Importable JS functions
         ├── tool_a.js      # export async function toolA(args) { ... }
         └── ...
@@ -160,15 +242,44 @@ First, compute derived names for each tool:
 
 Template: `assets/templates/config.template.js`. Replace:
 - `{{MCP_URL}}` → user-provided URL
-- `{{AUTH_READER}}` → **DO NOT insert the literal token** — generate the runtime auth reading code based on the user's chosen storage method (see critical rule in Step 1). Use one of the two patterns:
-  - **Env var**: `std.getenv("MCP_AUTH_TOKEN") || ""`
-  - **Config file**: `try/catch` block reading `../config.json` via `std.open()`
+- `{{AUTH_READER}}` → **DO NOT insert the literal token** — generate the runtime auth reading code based on the auth mode:
+  - **OAuth2 mode** (AUTH_MODE = "oauth2"): Config file method — reads `config.json` (populated by `auth-login.js`). The `AUTH_HEADER` field includes the `Bearer ` prefix.
+  - **Env var mode** (user chose env var): `std.getenv("MCP_AUTH_TOKEN") || ""`
+  - **No auth**: `""`
 - `{{MCP_SESSION_ID}}` → session ID from Step 2a (empty if stateless)
 - `{{CUSTOM_HEADERS}}` → JS array entries for any additional headers, e.g. `["X-Tools-Set", "my_tools"]`. Each entry on its own line with trailing comma. If no custom headers, leave empty.
 
+**CRITICAL: Never hardcode tokens in source files.**
+
+##### Config file pattern (used for OAuth2 mode)
+
+```javascript
+let __authHeader = "";
+try {
+    const f = std.open("../config.json", "r");
+    __authHeader = JSON.parse(f.readAsString()).AUTH_HEADER || "";
+    f.close();
+} catch (e) {}
+export const AUTH_HEADER = __authHeader;
+```
+
+The `config.json` format (created by `auth-login.js`, not manually):
+```json
+{
+  "AUTH_HEADER": "Bearer eyJ...",
+  "REFRESH_TOKEN": "ory_rt_...",
+  "EXPIRES_AT": 1781253648713
+}
+```
+
+##### Env var pattern (user-chosen, non-OAuth2)
+```javascript
+export const AUTH_HEADER = std.getenv("MCP_AUTH_TOKEN") || "";
+```
+
 #### 3b. `scripts/run.sh`
 
-Copy `assets/run.sh` verbatim and make it executable (`chmod +x`). This wraps `qjs --std "$@"` so users don't need to remember the `--std` flag (required for QuickJS built-in `std` and `os` modules).
+Copy `assets/run.sh` verbatim and make it executable (`chmod +x`). This wraps `qjs --std "$@"` so users don't need to remember the `--std` flag.
 
 Usage: `./run.sh mcp.js list`, `./run.sh mcp.js call get_weather '{"location":"Beijing"}'`
 
@@ -225,29 +336,54 @@ Replace:
   ```
   **Do NOT include descriptions or parameter lists here.** The index is just names + reference file pointers. The AI will read the relevant `references/<name>.md` on demand for details.
 
-#### 3h. `.gitignore` and `config.json.example` (only if using config file method)
+#### 3h. `scripts/auth-login.js` (only if OAuth2 mode)
 
-If the user chose the **config file** auth storage method, generate two additional files:
+Copy `assets/auth-login.js` and replace placeholders:
+- `{{AUTH_SERVER}}` → authorization server URL discovered in Step 1a-A
+- `{{MCP_URL}}` → user-provided MCP server URL
+- `{{DIR_NAME}}` → output directory basename (e.g. `mcp-quickjs-example` or user-chosen name)
+- `{{SCOPE}}` → scopes from OIDC discovery (usually `"openid profile offline offline_access"`)
+
+This tool is the **user's entry point for re-authentication**. It encapsulates:
+- Dynamic client registration (`/oauth2/register`)
+- PKCE generation (`code_verifier` + `code_challenge` via SHA-256)
+- Interactive authorization URL generation
+- Callback URL parsing and code exchange
+- Token storage to `config.json`
+- Token refresh support (`--refresh`)
+- Session reuse (prevents `code_verifier`/`code_challenge` mismatch on repeat runs)
+
+CLI interface:
+```
+./run.sh auth-login.js                    生成/复用授权链接
+./run.sh auth-login.js --new              强制创建新授权会话
+./run.sh auth-login.js --url '<回调URL>'   粘贴回调URL，自动交换token
+./run.sh auth-login.js --refresh          刷新 access_token
+./run.sh auth-login.js --status           查看 token 状态
+```
+
+#### 3i. `.gitignore` and `config.json.example` (only in OAuth2 or config file mode)
 
 **`.gitignore`** — prevents the auth config from being committed:
 ```
 config.json
 ```
 
-**`config.json.example`** — template for users to copy and fill in:
+**`config.json.example`** — template for users to copy and fill in (for OAuth2 mode, `auth-login.js` handles this automatically):
 ```json
 {
-  "AUTH_HEADER": "Bearer your_token_here"
+  "AUTH_HEADER": "Bearer your_token_here",
+  "REFRESH_TOKEN": "",
+  "EXPIRES_AT": 0
 }
 ```
-
-Skip these files if using the env var method — nothing to ignore and no file to template.
 
 ### Step 4: Present results
 
 After generation, summarize:
 - How many tools were discovered and wrapped
 - The output directory path and structure
+- **Authentication**: If OAuth2 was used, note that `config.json` already contains a valid token and `auth-login.js` is available for re-authentication
 - **CLI**: `cd scripts && ./run.sh mcp.js list` to discover; `./run.sh mcp.js call <name> '{}'` to invoke
 - **Programmatic composition**: import from `scripts/tools/<tool>.js` to build pipelines
 - **Reference docs**: `references/<tool>.md` for each tool's full parameter schema
