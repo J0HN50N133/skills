@@ -198,7 +198,9 @@ export function printToolList(tools) {
     for (let t of tools) {
         let pad = "";
         for (let i = t.name.length; i < maxLen; i++) pad += " ";
-        print("  " + t.name + pad + "  " + (t.description || "(no description)"));
+        let desc = (t.description || "(no description)").replace(/\n/g, " ");
+        if (desc.length > 80) desc = desc.substring(0, 80) + "...";
+        print("  " + t.name + pad + "  " + desc);
     }
 
     print("");
