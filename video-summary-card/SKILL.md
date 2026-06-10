@@ -1,83 +1,187 @@
 ---
 name: video-summary-card
 description: >
-  When a user provides a video URL (Bilibili, YouTube, etc.) and wants a summary infographic image.
-  Use this skill WHENEVER the user mentions: summarizing a video into an image/poster/card, generating
-  a video infographic, making a visual summary from video content, or any request combining a video URL
-  with image generation. Also trigger when the user pastes a video link and asks to "summarize",
-  "visualize", "make a card for", or "generate an image from" it.
+  Generate high-density Chinese infographic images from various content sources (video, web pages, articles).
+  Use this skill WHENEVER the user provides a URL (Bilibili, YouTube, or any web page) and wants a summary
+  infographic image. Also trigger when the user mentions: summarizing content into an image/poster/card,
+  generating an infographic, making a visual summary, or any request combining a URL with image generation.
 ---
 
-# Video Summary Card Generator
+# Universal Summary Card Generator
 
-Generate high-density Chinese infographic images from video content. The output is a 16:9
-poster-style image that presents the video's core arguments, data, and structure in a visually
-compelling way.
+Generate high-density Chinese infographic images from any URL content. The output is a 16:9
+poster-style image that presents the core arguments, data, and structure in a visually compelling way.
 
-## Workflow
+## Multi-Phase Workflow
 
-### 1. Parse URL → determine platform
+---
 
-Extract the domain and match against known platforms:
+## Phase 1: Content Extraction (Script-Based)
 
-| Pattern | Platform | opencli prefix |
-|---------|----------|----------------|
-| `bilibili.com/video/BV...` or `b23.tv` | Bilibili | `bilibili` |
-| `youtube.com/watch?v=` or `youtu.be` | YouTube | `youtube` |
+**Goal**: Extract structured content from the URL using appropriate extractors.
+**Executor**: Run `scripts/extract-content.sh` - automatically detects URL type and calls corresponding extractor.
 
-Extract the video ID from the URL. For Bilibili, it's the BV号 (e.g., `BV1TEVK6aE1G`).
-
-### 2. Fetch video content via opencli
-
-Run these in parallel:
+### 1.1 Run Extraction Script
 
 ```bash
-opencli <site> video <id> -f json      # title, author, duration, stats, description
-opencli <site> subtitle <id> -f json   # full subtitle text with timestamps
-opencli <site> summary <id> -f json    # AI-generated chapter summary (if available)
+cd /Users/johnsonlee/.codebuddy/skills/video-summary-card
+./scripts/extract-content.sh <URL>
 ```
 
-If `subtitle` or `summary` fails, proceed with whatever data is available. The `video`
-metadata is the minimum required.
+The script will:
+1. Detect URL type using regex (Bilibili, YouTube, PDF, or Web)
+2. Call appropriate extractor (`opencli` for videos, `web_fetch` for web pages)
+3. Save unified JSON to `/tmp/summary-card-content.json`
 
-### 3. Synthesize the content
+### 1.2 URL Type Detection
 
-Read the subtitle file (may be large, saved to disk) and produce a structured Chinese summary:
+The script matches against these patterns:
 
-- **Core topic**: What is the video fundamentally about? (1 sentence)
-- **Narrative structure**: How does the argument unfold? Opening hook → key demonstrations → mathematical/technical core → real-world applications → closing message.
-- **Key data points**: Numbers, formulas, probabilities, comparisons cited in the video.
-- **Memorable quotes or slogans**: Closings, punchlines, moral takeaways (in Chinese).
+| Pattern | Content Type | Extractor |
+|---------|--------------|-----------|
+| `bilibili.com/video/BV...` or `b23.tv` | Bilibili Video | `opencli bilibili` |
+| `youtube.com/watch?v=` or `youtu.be` | YouTube Video | `opencli youtube` |
+| `*.pdf` | PDF Document | `pdf` skill (TODO) |
+| `*` (default) | Web Page | `web_fetch` tool |
+
+### 1.3 Output Format
+
+Extracted content is saved to `/tmp/summary-card-content.json`:
+```json
+{
+  "source_type": "bilibili|youtube|web|pdf",
+  "metadata": {
+    "title": "...",
+    "author": "...",
+    "duration": "...",  // for videos
+    "publish_date": "...",
+    "url": "..."
+  },
+  "content": {
+    "full_text": "...",  // main content text
+    "summary": "...",    // if available
+    "subtitles": [...]   // for videos
+  },
+  "stats": {  // if available
+    "views": "...",
+    "likes": "...",
+    "word_count": "..."
+  }
+}
+```
+
+**Phase 1 Complete**: Script outputs "✅ Phase 1 Complete: Content extracted successfully"
+
+---
+
+## Phase 2: Content Synthesis (Agent-Based)
+
+**Goal**: Analyze extracted content and produce a structured Chinese summary.
+**Executor**: Agent reads `/tmp/summary-card-content.json` and synthesizes.
+
+### 2.1 Read Extracted Content
+
+```bash
+# Verify Phase 1 completed successfully
+cat /tmp/summary-card-content.json
+```
+
+### 2.2 Synthesize Structured Summary
+
+As an agent, read the full content and produce a dense, structured Chinese summary:
+
+**Required fields** (save to `/tmp/summary-card-synthesis.json`):
+
+```json
+{
+  "core_topic": "核心主题 (1句话)",
+  "narrative_structure": "内容结构描述",
+  "key_data_points": [
+    {
+      "label": "数据点标签",
+      "value": "数值",
+      "context": "上下文"
+    }
+  ],
+  "memorable_quotes": ["金句1", "金句2"],
+  "sections": [
+    {
+      "title": "板块标题",
+      "content": "板块内容",
+      "visual_suggestion": "可视化建议"
+    }
+  ],
+  "takeaway_quote": "最重要的收获",
+  "source_metadata": {
+    "title": "原标题",
+    "author": "作者/来源",
+    "stats": "统计数据"
+  }
+}
+```
+
+**Adapt synthesis based on content type**:
+- **Videos**: Use timestamps to structure sections, extract spoken data points
+- **Web pages**: Use headings/sections, extract written data and quotes
+- **PDFs**: Use chapters/sections, extract figures and tables
 
 Keep it dense — every sentence should carry information. Avoid filler.
 
-### 4. Choose art style
+### 2.3 Save Synthesis
+
+```bash
+# Save the synthesis JSON
+# (Agent should write this file based on the template above)
+```
+
+**Phase 2 Complete**: Notify user "✅ Content synthesized, preparing visualization..."
+
+---
+
+## Phase 3: Art Style Selection & Image Generation
+
+**Goal**: Choose art style and generate the infographic image.
+**Executor**: Script + Agent collaboration.
+
+### 3.1 Choose Art Style
 
 - If the user explicitly specifies an art style (e.g., "吉卜力风", "迷宫饭画风"), use it.
-- Otherwise, pick one randomly from the pool in `references/anime-styles.md`. Seed with
-  the video BV号 or ID for reproducibility across re-runs for the same video.
+- Otherwise, pick one randomly from the pool in `references/anime-styles.md`.
+- **Seed**: Use the URL or content ID (BV号, video ID, or URL hash) for reproducibility.
 - Announce which style was picked to the user.
 
-### 5. Build the image prompt
+Style selection algorithm:
+```python
+import hashlib
+content_id = extract_id_from_url(url)  # BV号, video ID, or URL hash
+seed = int(hashlib.md5(content_id.encode()).hexdigest(), 16)
+style_index = seed % 10  # 10 styles available
+```
 
-Read `references/prompt-template.md` for the full template structure. The prompt must:
+### 3.2 Build Image Prompt
 
+Read `references/prompt-template.md` for the full template structure.
+
+**Adaptations for different content types**:
+- **Videos**: Use video title/author, timestamp-based structure
+- **Web pages**: Use article title/source, section-based structure
+- **PDFs**: Use document title/author, chapter-based structure
+
+The prompt must:
 - Start with "A 16:9 infographic illustration in the [STYLE] art style"
 - All on-image text MUST be in **Chinese** (labels, titles, annotations, quotes)
 - Cover these zones systematically:
-  - **Title area**: Video title translated/adapted to a compelling Chinese headline
-  - **Center**: The main visual metaphor (e.g., Galton board, bell curve, mechanism diagram)
-  - **Corner panels**: Supporting evidence — data comparisons, formulas, before/after, key numbers
-  - **Character elements**: Characters in the chosen art style interacting with the concepts
+  - **Title area**: Content title adapted to a compelling Chinese headline
+  - **Center**: The main visual metaphor
+  - **Corner panels**: Supporting evidence — data comparisons, key numbers, formulas
+  - **Character elements**: Characters in the chosen art style interacting with concepts
   - **Bottom ribbon**: Key takeaway quote or slogan
-- Describe visual hierarchy: title largest → section headers → body annotations
-- Specify color palette, linework, and rendering details consistent with the chosen style
-- End with a quality/style booster: "scholarly adventure mood, hand-drawn ink lines, warm tones..."
+- Describe visual hierarchy and color palette consistent with chosen style
+- End with quality booster
 
-Write the full prompt in **English** (ChatGPT/DALL-E understands English prompts better)
-but specify that all visible text in the image must be Chinese.
+Write the full prompt in **English** but specify all visible text must be Chinese.
 
-### 6. Generate the image
+### 3.3 Generate Image
 
 ```bash
 opencli chatgpt image "<prompt>" -f plain
@@ -85,14 +189,31 @@ opencli chatgpt image "<prompt>" -f plain
 
 The command saves the image to `~/Pictures/chatgpt/` and prints the file path.
 
-### 7. Report results
+### 3.4 Report Results
 
 Show the user:
 - The generated image file path
 - The ChatGPT conversation link
 - A quick summary of which style was used and what the image covers
+- Key data points visualized
 
 If the user is on WSL, offer to open the folder in Windows Explorer:
 ```bash
 explorer.exe "$(wslpath -w ~/Pictures/chatgpt)" 2>/dev/null
 ```
+
+---
+
+## Error Handling
+
+- If Phase 1 fails (content extraction): Notify user with specific error, suggest alternative extraction method
+- If Phase 2 fails (synthesis): Proceed with raw content, notify user of degraded quality
+- If Phase 3 fails (image generation): Retry with simplified prompt, notify user
+
+## Notes
+
+- Phases are sequential and explicit - each phase must complete before the next begins
+- Phase 1 is script-based for speed and reliability
+- Phase 2 is agent-based for intelligent content understanding
+- Phase 3 combines both for optimal image generation
+- The skill is now content-type agnostic - works with any URL that can be extracted
